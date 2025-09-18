@@ -1,0 +1,5 @@
+{
+    "mode": "sequence",
+    "window_size": 127,
+    "label_policy": "center"
+}

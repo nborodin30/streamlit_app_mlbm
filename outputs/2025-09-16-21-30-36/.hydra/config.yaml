@@ -1,0 +1,33 @@
+data:
+  test_size: 0.15
+  val_size: 0.15
+  val_chroms: []
+  test_chroms: []
+sequence:
+  reference_fasta: /Users/Nikita/Desktop/Studium/Master/ML in Biomedicine/Project/data/hg38_10pct.fasta
+  mask_fasta: /Users/Nikita/Desktop/Studium/Master/ML in Biomedicine/Project/data/mask_10pct.fasta
+  window_size: 127
+  chrom_subset: []
+  label_policy: center
+model:
+  conv_channels:
+  - 8
+  - 16
+  - 16
+  - 32
+  kernel_size: 7
+  dropout: 0.1
+optim:
+  lr: 0.001
+  weight_decay: 0.0001
+  epochs: 5
+  batch_size: 32
+  num_workers: 0
+loss:
+  class_weights:
+  - 1.0
+  - 12.0
+train:
+  seed: 42
+  log_interval: 10
+  device: cpu

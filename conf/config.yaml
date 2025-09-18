@@ -1,0 +1,66 @@
+###############################################
+# Hydra configuration for the scientific ML pipeline
+# Modify values via CLI overrides, e.g.:
+#   python src/main.py optim.lr=5e-4 model.hidden_dims='[512,256,128]'
+###############################################
+
+data:  # Splitting parameters for sequence dataset
+  test_size: 0.15
+  val_size: 0.15
+  val_chroms: []  # optional explicit chromosome lists (take precedence if non-empty)
+  test_chroms: []
+
+# Sequence task configuration
+sequence:
+  reference_fasta: data/hg38.fasta
+  mask_fasta: data/mask.fasta
+  window_size: 127
+  chrom_subset: []  # optionally restrict e.g. ['chr1','chr2']; empty -> all
+  label_policy: center  # center | any | majority (how to derive window label from mask)
+
+
+model:  
+  # CNN parameters
+  #conv channels: [16, 32, 64, 128] -> full genome
+  #conv_channels: [16, 32, 64, 128, 64] -> 10pct
+  #also tried [8,16,32,64,128] -> 10pct
+  conv_channels: [16, 32, 64, 128]
+  kernel_size: 5
+  dropout: 0.2
+  #also tried 0.1, 0.2 for 10pct
+
+optim:
+  lr: 0.0003
+  weight_decay: 0.0001
+  epochs: 4
+  batch_size: 32 # tried 32, 64
+  num_workers: 4
+
+loss:
+  class_weights: [1.0, 20.0] #tried [1.0, 12.0]
+
+train:
+  seed: 42
+  log_interval: 10
+  device: cpu
+  patience: 0  # epochs to wait for improvement before early stopping; set to 0 to disable
+
+hydra:
+  run:
+    dir: outputs/${now:%Y-%m-%d-%H-%M-%S}
+  sweep:
+    dir: multirun/${now:%Y-%m-%d-%H-%M-%S}
+    subdir: ${hydra.job.num}
+  job:
+    chdir: true
+  job_logging:
+    root:
+      level: INFO
+    handlers:
+      console:
+        class: logging.StreamHandler
+        formatter: simple
+        stream: ext://sys.stdout
+    formatters:
+      simple:
+        format: '%(asctime)s | %(levelname)s | %(message)s'

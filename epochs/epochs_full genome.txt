@@ -1,0 +1,4 @@
+2025-09-17 20:51:12,608 | INFO | epoch=1 | train_loss=0.6397 | train_acc=0.6283 | train_mcc=0.2582 | val_loss=0.6362 | val_acc=0.6310 | val_mcc=0.2658 | time_sec=2045.2413
+2025-09-17 21:26:51,182 | INFO | epoch=2 | train_loss=0.6308 | train_acc=0.6403 | train_mcc=0.2823 | val_loss=0.6265 | val_acc=0.6490 | val_mcc=0.3077 | time_sec=2138.5718
+2025-09-17 22:01:56,986 | INFO | epoch=3 | train_loss=0.6290 | train_acc=0.6418 | train_mcc=0.2851 | val_loss=0.6352 | val_acc=0.6314 | val_mcc=0.2721 | time_sec=2105.8030
+early stopping
