@@ -21,8 +21,24 @@ import time
 from sentence_transformers import SentenceTransformer
 from nltk.corpus import stopwords
 import nltk
+from PIL import Image
+
+import base64
 
 nltk.download('stopwords')
+
+def get_download_link_bytes(bytes_data: bytes, filename: str, mime: str = "application/octet-stream"):
+    """
+    Возвращает HTML-ссылку (data:URI) для скачивания bytes_data как filename.
+    Clicking this link is handled by the browser and does not trigger a Streamlit rerun.
+    """
+    b64 = base64.b64encode(bytes_data).decode()
+    href = f'<a href="data:{mime};base64,{b64}" download="{filename}" ' \
+           f'style="display:inline-block;padding:6px 12px;margin:2px;' \
+           f'background-color:#4CAF50;color:white;border-radius:4px;' \
+           f'text-decoration:none;font-weight:bold;font-family:sans-serif;" ' \
+           f'target="_blank" rel="noopener noreferrer">⬇ {filename}</a>'
+    return href
 
 def nlp_page(nlp_spacy):
     """
@@ -31,13 +47,31 @@ def nlp_page(nlp_spacy):
     Args:
         nlp_spacy: Loaded SpaCy model for text processing.
     """
-    st.header("🧠 NLP: Disease Prediction")
+    # Initialize session_state to preserve CV results and state across reruns
+    if 'cv_results_df' not in st.session_state:
+        st.session_state.cv_results_df = None
+    if 'cv_complete' not in st.session_state:
+        st.session_state.cv_complete = False
+    if 'symptoms' not in st.session_state:
+        st.session_state.symptoms = []
+    if 'diseases' not in st.session_state:
+        st.session_state.diseases = []
 
+
+
+
+    st.header("🧠 NLP: Disease Prediction")
+    
     # File Upload or Preloaded Dataset
     df = pd.DataFrame()
     uploaded_file = st.file_uploader("Upload CSV file", type=["csv"])
     if uploaded_file is not None:
         df = pd.read_csv(uploaded_file)
+        if st.session_state.cv_complete:
+            st.session_state.cv_complete = False
+            st.session_state.cv_results_df = None
+            st.session_state.symptoms = []
+            st.session_state.diseases = []
     else:
         try:
             df = pd.read_csv("data/Symptoms2Diseases.csv")
@@ -89,8 +123,10 @@ def nlp_page(nlp_spacy):
     except KeyError:
         st.error("Error accessing selected columns. Please ensure the columns contain valid data.")
         return
+    
     symptoms = df[text_col].astype(str).tolist()
     diseases = df[label_col].astype(str).tolist()
+    
     unique_labels = sorted(set(diseases))
     st.write(f"Unique Labels: {len(unique_labels)} - {', '.join(unique_labels[:5]) + '...' if len(unique_labels) > 5 else ', '.join(unique_labels)}")
 
@@ -134,7 +170,7 @@ def nlp_page(nlp_spacy):
     if 'run_animation_now' not in st.session_state:
         st.session_state.run_animation_now = False
 
-    if st.button('Reload'):
+    if st.button('Reload', key='reload_wordcloud'):
         st.session_state.run_animation_now = True
 
     if not st.session_state.animation_ran:
@@ -182,9 +218,36 @@ def nlp_page(nlp_spacy):
         st.pyplot(fig_wc)
         plt.close(fig_wc)
 
+        img_buffer = io.BytesIO()
+        wordcloud.to_image().save(img_buffer, format='PNG')
+        img_bytes = img_buffer.getvalue()
+
+        # Генерация ссылки для скачивания без ререндер
+        st.markdown(get_download_link_bytes(img_bytes, "wordcloud.png", mime="image/png"),
+                    unsafe_allow_html=True)
     # Model Training
+    @st.cache_data
+    def get_embedder(model_name):
+        return SentenceTransformer(model_name)
+
+    if 'classifiers_templates' not in st.session_state:
+        st.session_state.classifiers_templates = {
+            "Logistic Regression": LogisticRegression(max_iter=1000, random_state=42),
+            "SVC": SVC(random_state=42),
+            "Random Forest": RandomForestClassifier(random_state=42),
+            "KNN": KNeighborsClassifier()
+        }
+
     st.subheader("Automated Training Pipeline")
-    rep_choice = st.selectbox("Text Representation", ["TF-IDF Vectorizer", "Sentence Transformer Embeddings"])
+
+    
+    rep_choice = st.selectbox(
+        "Text Representation",
+        ["TF-IDF Vectorizer", "Sentence Transformer Embeddings"],
+        key="rep_choice"
+    )
+    emb_model = None
+
     if rep_choice == "Sentence Transformer Embeddings":
         emb_models = [
             "all-mpnet-base-v2",
@@ -193,30 +256,26 @@ def nlp_page(nlp_spacy):
             "multi-qa-distilbert-dot-v1",
             "multi-qa-MiniLM-L6-dot-v1"
         ]
-        emb_model = st.selectbox("Select Embedding Model", emb_models)
-    else:
-        emb_model = None
+        emb_model = st.selectbox("Select Embedding Model", emb_models, key="emb_model")
+    with st.form("cv_form"):
+        classifiers = st.session_state.classifiers_templates
+        selected_classifiers = st.multiselect(
+            "Select Classifiers to Compare",
+            list(classifiers.keys()),
+            default=["Logistic Regression", "SVC"],
+            key="selected_classifiers"
+        )
+        k = st.slider("Number of CV Folds", min_value=3, max_value=10, value=5, key="cv_k")
 
-    classifiers = {
-        "Logistic Regression": LogisticRegression(max_iter=1000, random_state=42),
-        "SVC": SVC(random_state=42),
-        "Random Forest": RandomForestClassifier(random_state=42),
-        "KNN": KNeighborsClassifier()
-    }
-    selected_classifiers = st.multiselect("Select Classifiers to Compare", list(classifiers.keys()), default=["Logistic Regression", "SVC"])
-    k = st.slider("Number of CV Folds", min_value=3, max_value=10, value=5)
+        submit_cv = st.form_submit_button("Run Cross-Validation")
 
-    if st.button("Run Cross-Validation"):
+    if submit_cv:
         results = []
         progress = st.progress(0)
-        total_steps = len(selected_classifiers) * k
-
-        @st.cache_data
-        def get_embedder(model_name):
-            return SentenceTransformer(model_name)
+        total_steps = max(1, len(selected_classifiers) * k)
 
         for idx_clf, clf_name in enumerate(selected_classifiers):
-            clf_template = classifiers[clf_name]
+            clf_template = st.session_state.classifiers_templates[clf_name]
             fold_metrics = {'accuracy': [], 'precision': [], 'recall': [], 'f1': [], 'mcc': []}
             kf = KFold(n_splits=k, shuffle=True, random_state=42)
 
@@ -265,52 +324,94 @@ def nlp_page(nlp_spacy):
             })
 
         results_df = pd.DataFrame(results)
-        st.subheader("Cross-Validation Results")
-        st.dataframe(results_df)
-
-        csv = results_df.to_csv(index=False).encode('utf-8')
-        st.download_button("Download CV Results", csv, "cv_results.csv", "text/csv")
-
-        # Train and Download Final Model
-        st.subheader("Download Trained Model")
-        download_format = st.radio("Download Format", ["pkl", "joblib", "npy"])
-        selected_download_clf = st.selectbox("Select Classifier to Download", selected_classifiers)
+        st.session_state.cv_results_df = results_df
+        st.session_state.cv_results_csv = results_df.to_csv(index=False).encode("utf-8")
+        st.session_state.cv_complete = True
 
         if rep_choice == "TF-IDF Vectorizer":
             vectorizer = TfidfVectorizer(max_features=5000)
             X_vec = vectorizer.fit_transform(symptoms)
+            st.session_state.vectorizer = vectorizer
+            st.session_state.embedder = None
         else:
             embedder = get_embedder(emb_model)
             X_vec = embedder.encode(symptoms)
+            st.session_state.embedder = embedder
+            st.session_state.vectorizer = None
 
-        final_clf = classifiers[selected_download_clf]
-        final_clf.fit(X_vec, diseases)
+        st.session_state.X_vec = X_vec
+        st.session_state.models = {}
+        st.session_state.model_files = {}
 
-        model_buffer = io.BytesIO()
-        if download_format == "pkl":
-            pickle.dump(final_clf, model_buffer)
-            file_ext = ".pkl"
-        elif download_format == "joblib":
-            joblib.dump(final_clf, model_buffer)
-            file_ext = ".joblib"
-        else:  # npy
-            if hasattr(final_clf, 'coef_'):
-                np.save(model_buffer, final_clf.coef_)
-            elif hasattr(final_clf, 'feature_importances_'):
-                np.save(model_buffer, final_clf.feature_importances_)
+        for clf_name in selected_classifiers:
+            clf_template = st.session_state.classifiers_templates[clf_name]
+            clf = clf_template.__class__(**clf_template.get_params())
+            clf.fit(X_vec, diseases)
+            st.session_state.models[clf_name] = clf
+
+            files = {}
+            b = io.BytesIO()
+            pickle.dump(clf, b)
+            files['pkl'] = b.getvalue()
+
+            b = io.BytesIO()
+            try:
+                joblib.dump(clf, b)
+                files['joblib'] = b.getvalue()
+            except Exception:
+                files['joblib'] = files['pkl']
+
+            b = io.BytesIO()
+            if hasattr(clf, 'coef_'):
+                np.save(b, clf.coef_)
+                files['npy'] = b.getvalue()
+            elif hasattr(clf, 'feature_importances_'):
+                np.save(b, clf.feature_importances_)
+                files['npy'] = b.getvalue()
             else:
-                st.warning("This model does not support direct .npy export. Downloading as .joblib instead.")
-                joblib.dump(final_clf, model_buffer)
-                file_ext = ".joblib"
-            file_ext = ".npy"
+                files['npy'] = files['joblib']
+            
+            # Save which embedding model was used
+            files['text_representation'] = rep_choice
+            files['embedding_model'] = emb_model if rep_choice == "Sentence Transformer Embeddings" else None
 
-        model_bytes = model_buffer.getvalue()
-        st.download_button(
-            f"Download {selected_download_clf} Model ({file_ext})",
-            model_bytes,
-            f"{selected_download_clf}_{rep_choice}{file_ext}",
-            "application/octet-stream"
-        )
+            st.session_state.model_files[clf_name] = files
 
-        if rep_choice == "Sentence Transformer Embeddings":
-            st.info(f"Note: Download includes only the classifier. Use SentenceTransformer('{emb_model}') to generate embeddings for new predictions.")
+        st.success("Cross-validation finished. Models and download files are cached (client-side downloads available).")
+
+    if st.session_state.cv_complete and st.session_state.cv_results_df is not None:
+        st.subheader("Cross-Validation Results")
+        st.dataframe(st.session_state.cv_results_df)
+
+        csv_bytes = st.session_state.cv_results_csv
+        st.markdown(get_download_link_bytes(csv_bytes, "cv_results.csv", mime="text/csv"), unsafe_allow_html=True)
+
+        st.subheader("Download Trained Models (client-side links)")
+
+        if 'model_files' in st.session_state and st.session_state.model_files:
+            embedding_model_name = st.session_state.model_files.get('embedding_model', "TF-IDF")
+            table_data = []
+            for clf_name, files in st.session_state.model_files.items():
+                row = {"Model": clf_name}
+                if files.get('text_representation') == "Sentence Transformer Embeddings":
+                    row["Embedding Model"] = files.get('embedding_model', "Unknown")
+                else:
+                    row["Embedding Model"] = "TF-IDF"
+                row["PKL"] = get_download_link_bytes(files.get("pkl", b""), f"{clf_name}.pkl") if "pkl" in files else "N/A"
+                row["Joblib"] = get_download_link_bytes(files.get("joblib", b""), f"{clf_name}.joblib") if "joblib" in files else "N/A"
+                row["NPY"] = get_download_link_bytes(files.get("npy", b""), f"{clf_name}.npy") if "npy" in files else "N/A"
+                table_data.append(row)
+
+            table_df = pd.DataFrame(table_data)
+            
+            html_table = table_df.to_html(escape=False, index=False)
+            st.markdown(html_table, unsafe_allow_html=True)
+        else:
+            st.info("Models not cached yet. Run cross-validation to generate downloadable files.")
+
+        rep_choice_display = st.session_state.get('rep_choice', 'TF-IDF Vectorizer')
+        emb_model_display = st.session_state.model_files.get('embedding_model', None)
+        if emb_model_display and emb_model_display != "TF-IDF":
+            st.info(f"Note: Downloads include only classifiers. Use SentenceTransformer('{emb_model_display}') to produce embeddings for new texts when reloading models.")
+    else:
+        st.info("👆 Run cross-validation first to see results and download models")

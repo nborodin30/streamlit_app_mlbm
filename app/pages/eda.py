@@ -3,6 +3,8 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 from data_utils import parse_fasta
+import numpy as np
+import plotly.express as px
 
 def eda_page():
     """
@@ -43,19 +45,50 @@ def eda_page():
         per_chr = df.groupby("chr").agg(total_len=("seq_len","sum"), ones=("mask_ones","sum"))
         per_chr["zeros"] = per_chr["total_len"] - per_chr["ones"]
         per_chr["exon_ratio"] = per_chr["ones"] / per_chr["total_len"]
+        
         st.dataframe(per_chr.sort_index())
 
         # Plots
         st.subheader("Plots")
-        fig, ax = plt.subplots(1, 2, figsize=(12, 4))
-        sns.histplot(df["seq_len"], bins=30, kde=True, ax=ax[0])
-        ax[0].set_title("Sequence Length Distribution")
-        ax[0].set_xlabel("Length")
+        
+        # Determine the top chromosomes to display
+        top_n = 10
+        top_chromosomes = per_chr["total_len"].nlargest(top_n).index
+        per_chr_top = per_chr.loc[top_chromosomes]
 
-        per_chr_sorted = per_chr.sort_index()
-        sns.barplot(x=per_chr_sorted.index, y=per_chr_sorted["exon_ratio"], ax=ax[1])
-        ax[1].set_title("Exon Ratio per Chromosome")
-        ax[1].set_ylabel("Exon Ratio")
-        ax[1].set_xlabel("Chromosome")
-        plt.xticks(rotation=45)
+        # Calculate exon ratio for remaining chromosomes
+        remaining_chromosomes = per_chr.index.difference(top_chromosomes)
+        if not remaining_chromosomes.empty:
+            other_total_len = per_chr.loc[remaining_chromosomes, "total_len"].sum()
+            other_ones = per_chr.loc[remaining_chromosomes, "ones"].sum()
+            other_exon_ratio = other_ones / other_total_len if other_total_len > 0 else 0
+            
+            other_row = pd.DataFrame({
+                "total_len": [other_total_len],
+                "ones": [other_ones],
+                "zeros": [other_total_len - other_ones],
+                "exon_ratio": [other_exon_ratio]
+            }, index=["Other"])
+            per_chr_top = pd.concat([per_chr_top, other_row])
+        
+        # Create a boxplot for sequence length distribution by chromosome
+        df_for_plot = df.copy()
+        df_for_plot['chr_group'] = df_for_plot['chr'].apply(lambda x: x if x in top_chromosomes else 'Other')
+
+        fig1 = px.box(df_for_plot, x="chr_group", y="seq_len", 
+                     title="Sequence Length Distribution by Chromosome",
+                     labels={'chr_group': 'Chromosome Group', 'seq_len': 'Sequence Length'})
+        fig1.update_layout(xaxis_title="Chromosome Group", yaxis_title="Sequence Length")
+        st.plotly_chart(fig1)
+
+        # Plot 2: Exon Ratio per Chromosome (Grouped)
+        fig, ax = plt.subplots(figsize=(16, 6))
+        per_chr_top_sorted = per_chr_top.sort_values("exon_ratio", ascending=False)
+        sns.barplot(x=per_chr_top_sorted.index, y=per_chr_top_sorted["exon_ratio"], ax=ax)
+        ax.set_title("Exon Ratio per Chromosome (Top 10 + Other)")
+        ax.set_ylabel("Exon Ratio")
+        ax.set_xlabel("Chromosome")
+        plt.xticks(rotation=45, ha='right')
+        
+        plt.tight_layout()
         st.pyplot(fig)
