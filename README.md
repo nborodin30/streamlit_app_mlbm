@@ -67,6 +67,12 @@ conda activate streamlit_app_mlbm
 ---
 
 ## ▶️ Usage
+
+## 🔗 Live Demo
+You can try out the live version of the application here:
+https://bio-ml-explorer.streamlit.app/
+
+
 Run the application:
 ```bash
 streamlit run app/streamlit_app.py
