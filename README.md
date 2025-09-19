@@ -60,8 +60,10 @@ git clone https://github.com/nborodin30/streamlit_app_mlbm.git
 cd streamlit_app_mlbm
 
 # Create and activate conda environment
-conda env create -f environment.yml
+conda env create -f environment.yaml
 conda activate streamlit_app_mlbm
+python -m spacy download en_core_web_sm 
+
 ```
 
 ---
@@ -75,7 +77,7 @@ https://bio-ml-explorer.streamlit.app/
 
 Run the application:
 ```bash
-streamlit run app/streamlit_app.py
+streamlit run app/app.py
 ```
 
 The app will be available at [http://localhost:8501](http://localhost:8501).
